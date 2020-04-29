@@ -24,7 +24,9 @@ public:
 
 
 	static TSharedRef<FExtender> OnExtendContentBrowserAssetSelectionMenu(const TArray<FAssetData>& SelectedAssets);
-	static void CreateAssetMenu(FMenuBuilder& MenuBuilder, TArray<FAssetData> SelectedAssets);
+	static void CreateGenerateAimMatrixAssetMenu(FMenuBuilder& MenuBuilder, TArray<FAssetData> SelectedAssets);
+	static void CreateAutoRenameAssetMenu(FMenuBuilder& MenuBuilder, TArray<FAssetData> SelectedAssets);
 	static void GenerateAimMatrix(TArray<FAssetData> SelectedAssets);
+	static void AutoRename(TArray<FAssetData> SelectedAssets);
 
 };

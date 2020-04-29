@@ -6,6 +6,7 @@
 #include "Animation/AimOffsetBlendSpace.h"
 #include "AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "Sound/SoundWave.h"
 
 #define LOCTEXT_NAMESPACE "FTF2HelperPluginModule"
 
@@ -48,30 +49,52 @@ TSharedRef<FExtender>FTF2HelperPluginModule::OnExtendContentBrowserAssetSelectio
 {
 	TSharedRef<FExtender>Extender(new FExtender());
 
-	for (auto ItAsset = SelectedAssets.CreateConstIterator(); ItAsset; ++ItAsset)
+	if (SelectedAssets.Num() == 1)
 	{
-		if ((*ItAsset).AssetClass == UAnimSequence::StaticClass() -> GetFName())
+		if (SelectedAssets[0].AssetClass == UAnimSequence::StaticClass()->GetFName())
 		{
-			Extender -> AddMenuExtension(
-				TEXT("CommonAssetActions"),
-				EExtensionHook::First,
-				nullptr,
-				FMenuExtensionDelegate::CreateStatic(& FTF2HelperPluginModule::CreateAssetMenu, SelectedAssets)
-			);
-			return Extender;
+			if (SelectedAssets[0].AssetName.ToString().Contains("Aimmatrix", ESearchCase::CaseSensitive)) {
+				Extender->AddMenuExtension(
+					TEXT("CommonAssetActions"),
+					EExtensionHook::First,
+					nullptr,
+					FMenuExtensionDelegate::CreateStatic(&FTF2HelperPluginModule::CreateGenerateAimMatrixAssetMenu, SelectedAssets)
+				);
+			}
 		}
 	}
+
+	Extender->AddMenuExtension(
+		TEXT("CommonAssetActions"),
+		EExtensionHook::First,
+		nullptr,
+		FMenuExtensionDelegate::CreateStatic(&FTF2HelperPluginModule::CreateAutoRenameAssetMenu, SelectedAssets)
+	);
 
 	return Extender;
 }
 
-void FTF2HelperPluginModule::CreateAssetMenu(FMenuBuilder& MenuBuilder, TArray<FAssetData>SelectedAssets)
+
+
+void FTF2HelperPluginModule::CreateGenerateAimMatrixAssetMenu(FMenuBuilder& MenuBuilder, TArray<FAssetData>SelectedAssets)
 {
 	MenuBuilder.AddMenuEntry(
 		LOCTEXT("GenerateAimMatrix", "Generate AimMatrix"),
 		LOCTEXT("GenerateAimMatrix_Tooltip", "Generate AimMatrix"),
 		FSlateIcon(),
-		FUIAction(FExecuteAction::CreateStatic(& FTF2HelperPluginModule::GenerateAimMatrix, SelectedAssets)),
+		FUIAction(FExecuteAction::CreateStatic(&FTF2HelperPluginModule::GenerateAimMatrix, SelectedAssets)),
+		NAME_None,
+		EUserInterfaceActionType::Button
+	);
+}
+
+void FTF2HelperPluginModule::CreateAutoRenameAssetMenu(FMenuBuilder& MenuBuilder, TArray<FAssetData>SelectedAssets)
+{
+	MenuBuilder.AddMenuEntry(
+		LOCTEXT("AutoRename", "Auto Rename"),
+		LOCTEXT("AutoRename_Tooltip", "Auto Rename"),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateStatic(&FTF2HelperPluginModule::AutoRename, SelectedAssets)),
 		NAME_None,
 		EUserInterfaceActionType::Button
 	);
@@ -94,14 +117,9 @@ void FTF2HelperPluginModule::GenerateAimMatrix(TArray<FAssetData> SelectedAssets
 		Directions.Add(FTF2AimMatrixDirection{ TEXT("above"), 9, FVector(0, 90, 0) });
 
 		FString BaseAssetName = SelectedAsset.AssetName.ToString();
-		if (!BaseAssetName.Contains("aimmatrix")) {
-			auto Message = FText::Format(LOCTEXT("TF2GenAimMatrixSkipNotAimMatrix", "\"{AssetName}\" is not contains \"aimmatrix\".\n Skipping..."), FText::FromString(BaseAssetName));
-			FMessageDialog::Open(EAppMsgType::Ok, Message);
-			continue;
-		}
 		UAnimSequence* BaseAsset = Cast<UAnimSequence>(SelectedAsset.GetAsset());
 		if (BaseAsset == nullptr) {
-			auto Message = FText::Format(LOCTEXT("TF2GenAimMatrixSkipNotAnimSeq", "\"{AssetName}\" is not contains Anim Sequence.\n Skipping..."), FText::FromString(BaseAssetName));
+			auto Message = FText::Format(LOCTEXT("TF2GenAimMatrixSkipNotAnimSeq", "\"{AssetName}\" is not Anim Sequence.\n Skipping..."), FText::FromString(BaseAssetName));
 			FMessageDialog::Open(EAppMsgType::Ok, Message);
 			continue;
 		}
@@ -159,17 +177,86 @@ void FTF2HelperPluginModule::GenerateAimMatrix(TArray<FAssetData> SelectedAssets
 			PitchBlendParameter->GridNum = 3;
 		}
 
+		AimOffset->PreviewBasePose = AdditiveBasePose;
 
 		for (auto Direction : Directions) {
 			AimOffset->AddSample(Direction.Asset, Direction.SampleValue);
 		}
+	}
+}
 
-		AimOffset->PreviewBasePose = AdditiveBasePose;
-		AimOffset->MarkPackageDirty();
-		/*
-		FPropertyChangedEvent EmptyPropertyChangedEvent(nullptr);
-		FCoreUObjectDelegates::OnObjectPropertyChanged.Broadcast(AimOffset, EmptyPropertyChangedEvent);
-		*/
+void FTF2HelperPluginModule::AutoRename(TArray<FAssetData> SelectedAssets)
+{
+	for (auto Asset : SelectedAssets) {
+		auto Name = Asset.AssetName.ToString();
+		auto Class = Asset.AssetClass.ToString();
+
+		// Remove suffix
+		{
+			auto RemovingSuffix = TArray<FString>();
+			RemovingSuffix.Add(TEXT("_PhysicsAsset"));
+			RemovingSuffix.Add(TEXT("_Skeleton"));
+			for (auto Suffix : RemovingSuffix) {
+				if (Name.EndsWith(Suffix)) {
+					Name = Name.LeftChop(Suffix.Len());
+				}
+			}
+		}
+
+		// snake_case to UpperCamelCase
+		{
+			FString NewName;
+			NewName.AppendChar(FChar::ToUpper(Name[0]));
+			NewName.ToUpperInline();
+			for (int32 i = 1; i < Name.Len(); i++) {
+				if (Name.RightChop(i).Left(1) != TEXT("_")) {
+					NewName.AppendChar(FChar::ToLower(Name[i]));
+					continue;
+				}
+				i++;
+				NewName.AppendChar(FChar::ToUpper(Name[i]));
+			}
+			Name = NewName;
+		}
+
+		// Rename!
+		{
+			if (Class == USkeletalMesh::StaticClass()->GetName()) {
+				Name = TEXT("SK_") + Name;
+				UEditorAssetLibrary::RenameLoadedAsset(Asset.GetAsset(), FPaths::Combine(Asset.PackagePath.ToString(), Name));
+			}
+			else if (Class == UStaticMesh::StaticClass()->GetName()) {
+				Name = TEXT("SM_") + Name;
+				UEditorAssetLibrary::RenameLoadedAsset(Asset.GetAsset(), FPaths::Combine(Asset.PackagePath.ToString(), Name));
+			}
+			else if (Class == UTexture::StaticClass()->GetName()) {
+				Name = TEXT("T_") + Name;
+				UEditorAssetLibrary::RenameLoadedAsset(Asset.GetAsset(), FPaths::Combine(Asset.PackagePath.ToString(), Name));
+			}
+			else if (Class == UAnimSequence::StaticClass()->GetName()) {
+				if (Name.Contains(TEXT("AnimsRoot"))) {
+					Name = Name.Replace(TEXT("AnimsRoot"), TEXT(""));
+				}
+				if (Name.Contains(TEXT("AnimationsRoot"))) {
+					Name = Name.Replace(TEXT("AnimationsRoot"), TEXT(""));
+				}
+				Name = TEXT("A_") + Name;
+				UEditorAssetLibrary::RenameLoadedAsset(Asset.GetAsset(), FPaths::Combine(Asset.PackagePath.ToString(), Name));
+			}
+			else if(Class == USkeleton::StaticClass()->GetName())
+			{
+				Name = TEXT("SK_") + Name + TEXT("_Skeleton");
+				UEditorAssetLibrary::RenameLoadedAsset(Asset.GetAsset(), FPaths::Combine(Asset.PackagePath.ToString(), Name));
+			}
+			else if (Class == UPhysicsAsset::StaticClass()->GetName()) {
+				Name = TEXT("SK_") + Name + TEXT("_PhysicsAsset");
+				UEditorAssetLibrary::RenameLoadedAsset(Asset.GetAsset(), FPaths::Combine(Asset.PackagePath.ToString(), Name));
+			}
+			else if (Class == USoundWave::StaticClass()->GetName()) {
+				Name = TEXT("S_") + Name;
+				UEditorAssetLibrary::RenameLoadedAsset(Asset.GetAsset(), FPaths::Combine(Asset.PackagePath.ToString(), Name));
+			}
+		}
 	}
 }
 
